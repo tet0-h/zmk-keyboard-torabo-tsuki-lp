@@ -14,13 +14,17 @@
 #include <zmk/events/position_state_changed.h>
 #include <zmk/events/activity_state_changed.h>
 #include <zmk/events/split_peripheral_status_changed.h>
+#include <zmk/events/layer_state_changed.h>
 #include <zmk/usb.h>
+#include <zmk/keymap.h>
 
 LOG_MODULE_REGISTER(split_power_mgmt, CONFIG_ZMK_LOG_LEVEL);
 
 #define SLEEP1_TIMEOUT_MS 5000   // 5 seconds to sleep1 from active
 #define SLEEP2_TIMEOUT_MS 15000  // 15 seconds to sleep2 from sleep1  
 #define SLEEP3_TIMEOUT_MS 30000  // 30 seconds to sleep3 from sleep2
+#define TRACKBALL_LAYER_TIMEOUT_MS 500  // 500ms timeout to deactivate layer 1 after trackball stops
+#define TRACKBALL_LAYER_ID 1  // Layer ID to activate when trackball moves
 #define ACTIVE_CONN_INTERVAL CONFIG_ZMK_SPLIT_BLE_PREF_INT
 #define SLEEP1_CONN_INTERVAL (CONFIG_ZMK_SPLIT_BLE_PREF_INT*2)
 #define SLEEP2_CONN_INTERVAL (CONFIG_ZMK_SPLIT_BLE_PREF_INT*4)
@@ -42,6 +46,11 @@ static struct k_work_delayable power_mode_work;
 static enum power_mode current_mode = POWER_MODE_ACTIVE;
 static int64_t last_activity_time = 0;
 static struct bt_conn *split_conn = NULL;
+
+// Trackball layer management
+static struct k_work_delayable trackball_layer_timeout_work;
+static bool trackball_layer_active = false;
+static int64_t last_trackball_activity_time = 0;
 
 // Power mode transition handler
 static void power_mode_transition(struct k_work *work) {
@@ -237,14 +246,51 @@ static struct bt_conn_cb power_mgmt_bt_conn_callbacks = {
     .disconnected = power_mgmt_bt_conn_disconnected_cb,
 };
 
+// Deactivate layer 1 after trackball stops
+static void trackball_layer_timeout_handler(struct k_work *work) {
+    if (!trackball_layer_active) {
+        return;
+    }
+    
+    int64_t time_since_last_activity = k_uptime_get() - last_trackball_activity_time;
+    
+    // Only deactivate if trackball has been idle for the timeout period
+    if (time_since_last_activity >= TRACKBALL_LAYER_TIMEOUT_MS) {
+        zmk_keymap_layer_off(TRACKBALL_LAYER_ID);
+        trackball_layer_active = false;
+        LOG_INF("Layer 1 deactivated after trackball timeout");
+    }
+}
+
+// Activate layer 1 when trackball moves
+static void activate_trackball_layer(void) {
+    last_trackball_activity_time = k_uptime_get();
+    
+    if (!trackball_layer_active) {
+        zmk_keymap_layer_to(TRACKBALL_LAYER_ID);
+        trackball_layer_active = true;
+        LOG_INF("Layer 1 activated due to trackball movement");
+    }
+    
+    // Cancel existing timeout and schedule new one
+    k_work_cancel_delayable(&trackball_layer_timeout_work);
+    k_work_schedule(&trackball_layer_timeout_work, K_MSEC(TRACKBALL_LAYER_TIMEOUT_MS));
+}
+
 static void mouse_input_callback(struct input_event *evt) {
     reset_idle_timer();
+    
+    // Check if this is a mouse movement event (not a button click)
+    if (evt->type == INPUT_EV_REL) {
+        activate_trackball_layer();
+    }
 }
 
 static int split_power_mgmt_init(void) {
     LOG_INF("Initializing split power management");
     
     k_work_init_delayable(&power_mode_work, power_mode_transition);
+    k_work_init_delayable(&trackball_layer_timeout_work, trackball_layer_timeout_handler);
     
     bt_conn_cb_register(&power_mgmt_bt_conn_callbacks);
     
@@ -255,6 +301,8 @@ static int split_power_mgmt_init(void) {
     } else {
         LOG_INF("Split power management initialized - waiting for connection");
     }
+    
+    LOG_INF("Trackball layer control initialized (timeout: %d ms)", TRACKBALL_LAYER_TIMEOUT_MS);
     
     return 0;
 }
