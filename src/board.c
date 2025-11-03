@@ -48,9 +48,11 @@ static int64_t last_activity_time = 0;
 static struct bt_conn *split_conn = NULL;
 
 // Trackball layer management
+#if DT_HAS_NODELABEL(trackball)
 static struct k_work_delayable trackball_layer_timeout_work;
 static bool trackball_layer_active = false;
 static int64_t last_trackball_activity_time = 0;
+#endif
 
 // Power mode transition handler
 static void power_mode_transition(struct k_work *work) {
@@ -246,6 +248,7 @@ static struct bt_conn_cb power_mgmt_bt_conn_callbacks = {
     .disconnected = power_mgmt_bt_conn_disconnected_cb,
 };
 
+#if DT_HAS_NODELABEL(trackball)
 // Deactivate layer 1 after trackball stops
 static void trackball_layer_timeout_handler(struct k_work *work) {
     if (!trackball_layer_active) {
@@ -285,12 +288,15 @@ static void mouse_input_callback(struct input_event *evt) {
         activate_trackball_layer();
     }
 }
+#endif
 
 static int split_power_mgmt_init(void) {
     LOG_INF("Initializing split power management");
     
     k_work_init_delayable(&power_mode_work, power_mode_transition);
+#if DT_HAS_NODELABEL(trackball)
     k_work_init_delayable(&trackball_layer_timeout_work, trackball_layer_timeout_handler);
+#endif
     
     bt_conn_cb_register(&power_mgmt_bt_conn_callbacks);
     
@@ -302,12 +308,16 @@ static int split_power_mgmt_init(void) {
         LOG_INF("Split power management initialized - waiting for connection");
     }
     
+#if DT_HAS_NODELABEL(trackball)
     LOG_INF("Trackball layer control initialized (timeout: %d ms)", TRACKBALL_LAYER_TIMEOUT_MS);
+#endif
     
     return 0;
 }
 
-INPUT_CALLBACK_DEFINE(DEVICE_DT_GET_OR_NULL(DT_NODELABEL(trackball)) , mouse_input_callback);
+#if DT_HAS_NODELABEL(trackball)
+INPUT_CALLBACK_DEFINE(DEVICE_DT_GET(DT_NODELABEL(trackball)) , mouse_input_callback);
+#endif
 
 SYS_INIT(split_power_mgmt_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
 
