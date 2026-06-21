@@ -38,6 +38,6 @@ manifest:
       revision: main
     - name: zmk-module-runtime-input-processor
       remote: cormoran
-      revision: main
+      revision: dbf92f764de8b6ffd60bf5850514302875fe2570
   self:
     path: config
